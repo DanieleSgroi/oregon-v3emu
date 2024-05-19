@@ -1,6 +1,6 @@
 /**************************************************************************************************************************************
 **
-** Project: Oregon Scientific Emulator
+** Project: Oregon Scientific Multisensor Emulator
 ** File:    oregon-v3emu.INO
 ** Purpose: Main SW File
 ** 
@@ -10,7 +10,7 @@
 **  - May 18, 2024 - ALPHA 0.1 - D. Sgroi
 **
 ** TARGET HW:
-** - Teensy 4.1 with Ethernet Shield
+** - Teensy 4.1 
 **
 ** SOFTWARE:
 ** - Arduino 2.3.2+ IDE
@@ -27,7 +27,8 @@
 **
 **************************************************************************************************************************************/
 
-#define DEBUG                  1  // enable verbose debug messages on console  
+//#define DEBUG                  1  // enable verbose debug messages on console  
+#define STATISTICS             1  // enable verbose print of statistics
 
 /**************************************************************************************************************************************
 ** HW DEFINES
@@ -45,56 +46,56 @@
 #define V3_PULSE_SHORTEN_US  134  // 138us not working reliably
 #define V3_PULSE_TUNING      1.1  // increase up to 1.4 if base station doesn't pick up messages
 
-#define UVN_PAYLOAD_NIBBLES   13
+#define UVN_PAYLOAD_NIBBLES   13  // Ultra-Violet Sensor
 #define UVN_TX_BYTES          12
 
-#define PCR_PAYLOAD_NIBBLES   18
+#define PCR_PAYLOAD_NIBBLES   18 // rain gauge
 #define PCR_TX_BYTES          15
 
 // TX Channel 1..10 for WMR200
-#define THG_PAYLOAD_NIBBLES   15 // excluding preamble, sync and trailing checksums
+#define THG_PAYLOAD_NIBBLES   15 // Thermo-Hygro Sensor, up to 10 channels
 #define THG_TX_BYTES          13
 
-#define WGR_PAYLOAD_NIBBLES   17
+#define WGR_PAYLOAD_NIBBLES   17 // Anemometer
 #define WGR_TX_BYTES          14
+
+/**************************************************************************************************************************************
+** SW DEFINES - TASK SCHEDULER
+**************************************************************************************************************************************/
+
+//#define _TASK_SCHEDULING_OPTIONS    // Support for multiple scheduling options
 
 /**************************************************************************************************************************************
 ** INCLUDES
 **************************************************************************************************************************************/
 
 #include <_Teensy.h>
-#include "TaskScheduler.h" // https://github.com/arkhipenko/TaskScheduler
+#include "TaskScheduler.h"
 
 /**************************************************************************************************************************************
 ** GLOBALS
 **************************************************************************************************************************************/
 
 // OSV3 THGR Sensor channel tx rate in sec. idx 0 is UVN800 rate
-const unsigned long int channelrate[] = {73000, 53000, 59000, 61000, 67000, 
-                                         71000, 79000, 83000, 87000, 91000, 
-                                         93000};
+// const unsigned long int channelrate[] = {73000, 53000, 59000, 61000, 67000, 71000, 79000, 83000, 87000, 91000, 93000};
 
-// set UVN800's reading for UVI which is increased after each 
-// transmission for testing purposes if DEBUG_INC is set
+// set UVN800's reading for UVI which is increased after each transmission for testing purposes
 static uint8_t t_uvi = 1;
 
-// set PCR800's precipitation readings (inches) which are increased 
-// after each transmission for testing purposes if DEBUG_INC is set
+// set PCR800's precipitation readings (inches) which are increased after each transmission for testing purposes
 static float p_total = 2.7;
 static float p_hourly = 0.3;
 
-// set THGN801's values for temperature (degrees Celcius) and humidity 
-// which are  increased after each transmission if DEBUG_INC is set
+// set THGN801's values for temperature (degrees Celsius) and humidity which are increased after each transmission
 static float t_temp = -1.5;
 static uint8_t t_hum = 20;
 
-// set WGR800 wind speed readings (max. 99.9 m/s) and direction which are
-// increased after each transmission for testing purposes if DEBUG_INC is set 
+// set WGR800 wind speed readings (max. 99.9 m/s) and direction which are increased after each transmission for testing purposes
 static float t_avg = 1.3;
 static float t_gust = 2.6;
 static float t_dir = 45;
 
-// rolling code changes on every sensor reset
+// rolling code, same for all sensors (in reality each sensor has it's own rolling code)
 static uint8_t rollingCode;
 
 /**************************************************************************************************************************************
@@ -113,12 +114,23 @@ void t5Callback(void); // WGR 14000
 Scheduler runner;
 
 //Tasks
-Task t0(73000, TASK_FOREVER, &t0Callback, &runner, false); // UVN 0
-Task t1(53000, TASK_FOREVER, &t1Callback, &runner, false); // THGN 1
-Task t2(59000, TASK_FOREVER, &t2Callback, &runner, false); // THGN 2
-Task t3(61000, TASK_FOREVER, &t3Callback, &runner, false); // THGN 3
-Task t4(47000, TASK_FOREVER, &t4Callback, &runner, false); // PCR 47000
-Task t5(14000, TASK_FOREVER, &t5Callback, &runner, false); // WGR 14000
+Task t0(73000, TASK_FOREVER, &t0Callback, &runner, false); // UVN tx rate
+Task t1(53000, TASK_FOREVER, &t1Callback, &runner, false); // THGN 1 tx rate
+Task t2(59000, TASK_FOREVER, &t2Callback, &runner, false); // THGN 2 tx rate
+Task t3(61000, TASK_FOREVER, &t3Callback, &runner, false); // THGN 3 tx rate
+Task t4(47000, TASK_FOREVER, &t4Callback, &runner, false); // PCR tx rate
+Task t5(14000, TASK_FOREVER, &t5Callback, &runner, false); // WGR tx rate
+
+#ifdef STATISTICS
+  static unsigned long int tstart[] = {0, 0, 0, 0, 0, 0};
+  static unsigned long int tstop[] = {0, 0, 0, 0, 0, 0};
+  static unsigned long int tprev[] = {0, 0, 0, 0, 0, 0};
+  static unsigned long int tdur[] = {0, 0, 0, 0, 0, 0};
+  static unsigned long int trate[] = {0, 0, 0, 0, 0, 0};
+  static unsigned long int tavg[] = {0, 0, 0, 0, 0, 0};
+  static unsigned long int tidx[] = {0, 0, 0, 0, 0, 0};
+  static bool bNewStat[] = {false, false, false, false, false, false};
+#endif
 
 /***************************************************************************
 ** t0Callback
@@ -128,6 +140,9 @@ Task t5(14000, TASK_FOREVER, &t5Callback, &runner, false); // WGR 14000
 ***************************************************************************/
 
 void t0Callback() {
+
+  tprev[0] = tstart[0];
+  tstart[0] = millis();
 
 #ifdef DEBUG
   Serial.print(F("t0 run "));
@@ -144,8 +159,16 @@ void t0Callback() {
 #ifdef DEBUG    
     Serial.println(F("t1 enable"));
 #endif    
-    t1.enableDelayed(500); // set space between tx
+    t1.enableDelayed(1000); // set space between tx
   }
+
+#ifdef STATISTICS
+  bNewStat[0] = true;
+  tidx[0]++;
+  trate[0] = tstart[0] - tprev[0];
+  tstop[0] = millis();
+  tdur[0] = tstop[0] - tstart[0];
+#endif 
 
 } // t0Callback
 
@@ -157,6 +180,9 @@ void t0Callback() {
 ***************************************************************************/
 
 void t1Callback() {
+
+  tprev[1] = tstart[1];
+  tstart[1] = millis();
 
 #ifdef DEBUG
   Serial.print(F("t1 run "));
@@ -177,8 +203,16 @@ void t1Callback() {
 #ifdef DEBUG
     Serial.println(F("t2 enable"));
 #endif  
-    t2.enableDelayed(500); // set space between tx
+    t2.enableDelayed(1000); // set space between tx
   }
+
+#ifdef STATISTICS
+  bNewStat[1] = true;
+  tidx[1]++;
+  trate[1] = tstart[1] - tprev[1];
+  tstop[1] = millis();
+  tdur[1] = tstop[1] - tstart[1];
+#endif 
 
 } // t1Callback
 
@@ -190,6 +224,9 @@ void t1Callback() {
 ***************************************************************************/
 
 void t2Callback() {
+
+  tprev[2] = tstart[2];
+  tstart[2] = millis();
 
 #ifdef DEBUG
   Serial.print(F("t2 run "));
@@ -210,8 +247,16 @@ void t2Callback() {
 #ifdef DEBUG    
     Serial.println(F("t3 enable"));
 #endif
-    t3.enableDelayed(500); // set space between tx
+    t3.enableDelayed(1000); // set space between tx
   }
+
+#ifdef STATISTICS
+  bNewStat[2] = true;
+  tidx[2]++;
+  trate[2] = tstart[2] - tprev[2];
+  tstop[2] = millis();
+  tdur[2] = tstop[2] - tstart[2];
+#endif 
 
 } // t2Callback
 
@@ -224,6 +269,9 @@ void t2Callback() {
 
 void t3Callback() {
 
+  tprev[3] = tstart[3];
+  tstart[3] = millis();
+
 #ifdef DEBUG
   Serial.print(F("t3 run "));
 #endif  
@@ -234,8 +282,16 @@ void t3Callback() {
 #ifdef DEBUG    
     Serial.println(F("t4 enable"));
 #endif  
-    t4.enableDelayed(500); // set space between tx
+    t4.enableDelayed(1000); // set space between tx
   }
+
+#ifdef STATISTICS
+  bNewStat[3] = true;
+  tidx[3]++;
+  trate[3] = tstart[3] - tprev[3];
+  tstop[3] = millis();
+  tdur[3] = tstop[3] - tstart[3];
+#endif 
 
 } // t4Callback
 
@@ -247,6 +303,9 @@ void t3Callback() {
 ***************************************************************************/
 
 void t4Callback() {
+
+  tprev[4] = tstart[4];
+  tstart[4] = millis();
 
 #ifdef DEBUG
   Serial.print(F("t4 run "));
@@ -267,8 +326,16 @@ void t4Callback() {
 #ifdef DEBUG    
     Serial.println(F("t5 enable"));
 #endif
-    t5.enableDelayed(500); // set space between tx
+    t5.enableDelayed(1000); // set space between tx
   }
+
+#ifdef STATISTICS
+  bNewStat[4] = true;
+  tidx[4]++;
+  trate[4] = tstart[4] - tprev[4];
+  tstop[4] = millis();
+  tdur[4] = tstop[4] - tstart[4];
+#endif 
 
 } // t4Callback
 
@@ -280,6 +347,9 @@ void t4Callback() {
 ***************************************************************************/
 
 void t5Callback() {
+
+  tprev[5] = tstart[5];
+  tstart[5] = millis();
 
 #ifdef DEBUG
   Serial.print(F("t5 run "));
@@ -300,12 +370,20 @@ void t5Callback() {
     if (t_dir > 359)
     t_dir = 0;
 
-  if (t5.isFirstIteration()) {
-#ifdef DEBUG
-    Serial.println(F("t6 enable"));
-#endif  
-    //t6.enableDelayed(500); // set space between tx
-  }
+//  if (t5.isFirstIteration()) {
+//#ifdef DEBUG
+//    Serial.println(F("t6 enable"));
+//#endif  
+//    t6.enableDelayed(1000); // set space between tx
+//  }
+
+#ifdef STATISTICS
+  bNewStat[5] = true;
+  tidx[5]++;
+  trate[5] = tstart[5] - tprev[5];
+  tstop[5] = millis();
+  tdur[5] = tstop[5] - tstart[5];
+#endif 
 
 } // t5Callback
 
@@ -725,14 +803,6 @@ void setup() {
   Serial.print(": Rolling code: ");
   Serial.println(rollingCode, HEX);
 
-  //runner.init();
-  //runner.addTask(t0);
-  //runner.addTask(t1);
-  //runner.addTask(t2);
-  //runner.addTask(t3);
-  //runner.addTask(t4);
-  //runner.addTask(t5);
-
   // allow powered up items time to ready themselves
   delay(500);
 
@@ -757,7 +827,36 @@ void setup() {
 
 void loop() {
 
-    runner.execute();
+  runner.execute();
+
+#ifdef STATISTICS
+  for (unsigned int i = 0; i < sizeof(bNewStat); i++) {
+    if(bNewStat[i]) {
+      bNewStat[i] = false;
+      Serial.print(F("T")); 
+      Serial.print(i); 
+      Serial.print(F(" C = "));
+      Serial.print(tidx[i]);
+
+      Serial.print(F(" s = "));
+      Serial.print(tstart[i]);
+      Serial.print(F(" S = "));
+      Serial.print(tstop[i]);
+      //Serial.print(F(" D = "));
+      //Serial.print(tdur[i]);
+
+      if(tidx[i] > 1) {
+        tavg[i] -= tavg[i] / (tidx[i] - 1);
+        tavg[i] += trate[i] / (tidx[i] - 1);
+        Serial.print(F(" R = "));
+        Serial.print(trate[i]);
+        Serial.print(F(" A = "));
+        Serial.print(tavg[i]);
+      }
+      Serial.println();
+    }
+  }
+#endif  
 
 } // loop
 
