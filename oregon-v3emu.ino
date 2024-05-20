@@ -48,22 +48,34 @@
 
 #define UVN_PAYLOAD_NIBBLES   13  // Ultra-Violet Sensor
 #define UVN_TX_BYTES          12
+#define UVN_RATE           73000
 
 #define PCR_PAYLOAD_NIBBLES   18 // rain gauge
 #define PCR_TX_BYTES          15
+#define PCR_RATE           47000
 
 // TX Channel 1..10 for WMR200
 #define THG_PAYLOAD_NIBBLES   15 // Thermo-Hygro Sensor, up to 10 channels
 #define THG_TX_BYTES          13
+#define THG_1_RATE         53000
+#define THG_2_RATE         59000
+#define THG_3_RATE         61000
 
 #define WGR_PAYLOAD_NIBBLES   17 // Anemometer
 #define WGR_TX_BYTES          14
+#define WGR_RATE           14000
+
+#define START_DELAY        10000
 
 /**************************************************************************************************************************************
 ** SW DEFINES - TASK SCHEDULER
 **************************************************************************************************************************************/
 
 //#define _TASK_SCHEDULING_OPTIONS    // Support for multiple scheduling options
+#define _TASK_INLINE
+#define _TASK_TIMECRITICAL
+#define _TASK_DEFINE_MILLIS
+#define _TASK_THREAD_SAFE
 
 /**************************************************************************************************************************************
 ** INCLUDES
@@ -113,7 +125,7 @@ void t5Callback(void); // WGR 14000
 // Scheduler
 Scheduler runner;
 
-//Tasks
+//Tasks - all active at startup
 Task t0(73000, TASK_FOREVER, &t0Callback, &runner, false); // UVN tx rate
 Task t1(53000, TASK_FOREVER, &t1Callback, &runner, false); // THGN 1 tx rate
 Task t2(59000, TASK_FOREVER, &t2Callback, &runner, false); // THGN 2 tx rate
@@ -153,14 +165,14 @@ void t0Callback() {
   // increase readings for testing
   t_uvi += 1;
   if (t_uvi > 15)
-    t_uvi = 1;
+    t_uvi = 0;
 
-  if (t0.isFirstIteration()) {
-#ifdef DEBUG    
-    Serial.println(F("t1 enable"));
-#endif    
-    t1.enableDelayed(1000); // set space between tx
-  }
+//  if (t0.isFirstIteration()) {
+//#ifdef DEBUG    
+//    Serial.println(F("t1 enable"));
+//#endif    
+//    t1.enableDelayed(1000); // set space between tx
+//  }
 
 #ifdef STATISTICS
   bNewStat[0] = true;
@@ -199,12 +211,12 @@ void t1Callback() {
   if (t_hum > 95)
     t_hum = 30;
 
-  if (t1.isFirstIteration()) {
-#ifdef DEBUG
-    Serial.println(F("t2 enable"));
-#endif  
-    t2.enableDelayed(1000); // set space between tx
-  }
+//  if (t1.isFirstIteration()) {
+//#ifdef DEBUG
+//    Serial.println(F("t2 enable"));
+//#endif  
+//    t2.enableDelayed(1000); // set space between tx
+//  }
 
 #ifdef STATISTICS
   bNewStat[1] = true;
@@ -243,12 +255,12 @@ void t2Callback() {
   if (t_hum > 95)
     t_hum = 30;
 
-  if (t2.isFirstIteration()) {
-#ifdef DEBUG    
-    Serial.println(F("t3 enable"));
-#endif
-    t3.enableDelayed(1000); // set space between tx
-  }
+//  if (t2.isFirstIteration()) {
+//#ifdef DEBUG    
+//    Serial.println(F("t3 enable"));
+//#endif
+//    t3.enableDelayed(1000); // set space between tx
+//  }
 
 #ifdef STATISTICS
   bNewStat[2] = true;
@@ -278,12 +290,12 @@ void t3Callback() {
 
   send_data_v3(payload_thgn801(12.3, 45, 0x03), THG_TX_BYTES);
 
-  if (t3.isFirstIteration()) {
-#ifdef DEBUG    
-    Serial.println(F("t4 enable"));
-#endif  
-    t4.enableDelayed(1000); // set space between tx
-  }
+//  if (t3.isFirstIteration()) {
+//#ifdef DEBUG    
+//    Serial.println(F("t4 enable"));
+//#endif  
+//    t4.enableDelayed(1000); // set space between tx
+//  }
 
 #ifdef STATISTICS
   bNewStat[3] = true;
@@ -322,12 +334,12 @@ void t4Callback() {
   if (p_total > 20)
     p_total = 10;
 
-  if (t4.isFirstIteration()) {
-#ifdef DEBUG    
-    Serial.println(F("t5 enable"));
-#endif
-    t5.enableDelayed(1000); // set space between tx
-  }
+//  if (t4.isFirstIteration()) {
+//#ifdef DEBUG    
+//    Serial.println(F("t5 enable"));
+//#endif
+//    t5.enableDelayed(1000); // set space between tx
+//  }
 
 #ifdef STATISTICS
   bNewStat[4] = true;
@@ -789,8 +801,7 @@ void setup() {
 
   Serial.begin(115200);
   //while (!Serial); // wait for serial port to connect. commented to allow start with USB power only
-  Serial.println(F("Starting Oregon V3 emulator..."));
-  delay(5000); // to allow reset of console
+  Serial.print(F("Oregon V3 emulator - "));
   Serial.print(F(__DATE__));
   Serial.print(F(" - "));
   Serial.print(F(__TIME__));
@@ -803,9 +814,6 @@ void setup() {
   Serial.print(": Rolling code: ");
   Serial.println(rollingCode, HEX);
 
-  // allow powered up items time to ready themselves
-  delay(500);
-
   // enable only t0, t1..tn are enabled lately from inside t0, t1, tn-1 to allow 
   // for time spacing of different channels transmissions
 #ifdef DEBUG
@@ -814,7 +822,13 @@ void setup() {
 
   digitalWrite(LED_BUILTIN, LOW);   // turn the LED
 
-  t0.enable(); // only enable t0 as others are enabled lately to separate rf tx
+  // task enable in this order, allow time for console reset
+  t0.enableDelayed(START_DELAY + UVN_RATE);
+  t1.enableDelayed(START_DELAY + THG_1_RATE);
+  t2.enableDelayed(START_DELAY + THG_2_RATE);
+  t3.enableDelayed(START_DELAY + THG_3_RATE);
+  t4.enableDelayed(START_DELAY + PCR_RATE); 
+  t5.enableDelayed(START_DELAY); // fastest rate start first
 
 } // setup
 
@@ -838,10 +852,10 @@ void loop() {
       Serial.print(F(" C = "));
       Serial.print(tidx[i]);
 
-      Serial.print(F(" s = "));
-      Serial.print(tstart[i]);
-      Serial.print(F(" S = "));
-      Serial.print(tstop[i]);
+      //Serial.print(F(" s = "));
+      //Serial.print(tstart[i]);
+      //Serial.print(F(" S = "));
+      //Serial.print(tstop[i]);
       //Serial.print(F(" D = "));
       //Serial.print(tdur[i]);
 
