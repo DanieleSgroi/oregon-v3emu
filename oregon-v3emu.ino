@@ -4,7 +4,7 @@
 ** File:    oregon-v3emu.INO
 ** Purpose: Main SW File
 ** 
-** (C) 2019 by Daniele Sgroi - daniele.sgroi@gmail.com
+** (C) 2024 by Daniele Sgroi - daniele.sgroi@gmail.com
 **
 ** VERSION:
 **  - May 18, 2024 - ALPHA 0.1 - D. Sgroi
