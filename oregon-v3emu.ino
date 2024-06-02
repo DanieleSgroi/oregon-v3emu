@@ -126,12 +126,12 @@ void t5Callback(void); // WGR 14000
 Scheduler runner;
 
 //Tasks - all active at startup
-Task t0(73000, TASK_FOREVER, &t0Callback, &runner, false); // UVN tx rate
-Task t1(53000, TASK_FOREVER, &t1Callback, &runner, false); // THGN 1 tx rate
-Task t2(59000, TASK_FOREVER, &t2Callback, &runner, false); // THGN 2 tx rate
-Task t3(61000, TASK_FOREVER, &t3Callback, &runner, false); // THGN 3 tx rate
-Task t4(47000, TASK_FOREVER, &t4Callback, &runner, false); // PCR tx rate
-Task t5(14000, TASK_FOREVER, &t5Callback, &runner, false); // WGR tx rate
+Task t0(UVN_RATE, TASK_FOREVER, &t0Callback, &runner, false); // UVN tx rate
+Task t1(THG_1_RATE, TASK_FOREVER, &t1Callback, &runner, false); // THGN 1 tx rate
+Task t2(THG_2_RATE, TASK_FOREVER, &t2Callback, &runner, false); // THGN 2 tx rate
+Task t3(THG_3_RATE, TASK_FOREVER, &t3Callback, &runner, false); // THGN 3 tx rate
+Task t4(PCR_RATE, TASK_FOREVER, &t4Callback, &runner, false); // PCR tx rate
+Task t5(WGR_RATE, TASK_FOREVER, &t5Callback, &runner, false); // WGR tx rate
 
 #ifdef STATISTICS
   static unsigned long int tstart[] = {0, 0, 0, 0, 0, 0};
@@ -828,7 +828,7 @@ void setup() {
   t2.enableDelayed(START_DELAY + THG_2_RATE);
   t3.enableDelayed(START_DELAY + THG_3_RATE);
   t4.enableDelayed(START_DELAY + PCR_RATE); 
-  t5.enableDelayed(START_DELAY); // fastest rate start first
+  t5.enableDelayed(START_DELAY + WGR_RATE); // fastest rate start first
 
 } // setup
 
